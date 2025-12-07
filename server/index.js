@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import mysql from 'mysql2/promise';
 import kvpkg from '../lib/server/kv.js';
+import storepkg from '../lib/server/store.js';
 import bcrypt from 'bcryptjs';
 
 dotenv.config();
@@ -297,8 +298,17 @@ app.post('/api/admin/membership/generate', async (req, res) => {
 // Manual trigger for cleanup
 app.post('/api/admin/cleanup-reservations', async (_req, res) => {
   try {
-    const result = await cleanupReservationsDb();
-    res.json(result);
+    const dbResult = await cleanupReservationsDb();
+    let kvResult = null;
+    const { cleanupExpiredReservations } = storepkg || {};
+    if (typeof cleanupExpiredReservations === 'function') {
+      try {
+        kvResult = await cleanupExpiredReservations();
+      } catch (e) {
+        console.error('[cleanup:kv:error]', e.message);
+      }
+    }
+    res.json({ db: dbResult, kv: kvResult });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -315,8 +325,16 @@ function scheduleDailyCleanup() {
   console.log('[cleanup:schedule] first at', firstRun.toISOString());
   setTimeout(() => {
     cleanupReservationsDb().catch((e) => console.error('[cleanup:schedule:error]', e.message));
+    const { cleanupExpiredReservations } = storepkg || {};
+    if (typeof cleanupExpiredReservations === 'function') {
+      cleanupExpiredReservations().catch((e) => console.error('[cleanup:schedule:kv_error]', e.message));
+    }
     setInterval(() => {
       cleanupReservationsDb().catch((e) => console.error('[cleanup:schedule:error]', e.message));
+      const { cleanupExpiredReservations } = storepkg || {};
+      if (typeof cleanupExpiredReservations === 'function') {
+        cleanupExpiredReservations().catch((e) => console.error('[cleanup:schedule:kv_error]', e.message));
+      }
     }, 24 * 60 * 60 * 1000);
   }, delay);
 }
